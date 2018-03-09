@@ -23,13 +23,13 @@
     </parent>
 
     <groupId>fit.fraunhofer.de</groupId>
-    <artifactId>nifi-customlistentcp-bundle</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <artifactId>nifi-custom-listen-tcp-bundle</artifactId>
+    <version>1.0</version>
     <packaging>pom</packaging>
 
     <modules>
-        <module>nifi-customlistentcp-processors</module>
-        <module>nifi-customlistentcp-nar</module>
+        <module>nifi-custom-listen-tcp-processors</module>
+        <module>nifi-custom-listen-tcp-nar</module>
     </modules>
 
 </project>
