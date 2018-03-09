@@ -28,6 +28,7 @@ import org.apache.nifi.components.ValidationContext;
 import org.apache.nifi.components.ValidationResult;
 import org.apache.nifi.processor.DataUnit;
 import org.apache.nifi.processor.ProcessContext;
+import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.processor.util.listen.AbstractListenEventBatchingProcessor;
 import org.apache.nifi.processor.util.listen.dispatcher.AsyncChannelDispatcher;
 import org.apache.nifi.processor.util.listen.dispatcher.ChannelDispatcher;
@@ -36,7 +37,6 @@ import org.apache.nifi.processor.util.listen.event.EventFactory;
 import org.apache.nifi.processor.util.listen.event.StandardEvent;
 import org.apache.nifi.processor.util.listen.event.StandardEventFactory;
 import org.apache.nifi.processor.util.listen.handler.ChannelHandlerFactory;
-import org.apache.nifi.processor.util.listen.handler.socket.SocketChannelHandlerFactory;
 import org.apache.nifi.security.util.SslContextFactory;
 import org.apache.nifi.ssl.RestrictedSSLContextService;
 import org.apache.nifi.ssl.SSLContextService;
@@ -63,8 +63,8 @@ import java.util.concurrent.BlockingQueue;
         "set as large as the largest messages expected to be received, meaning if every 100kb there is a line separator, then " +
         "the Receive Buffer Size must be greater than 100kb.")
 @WritesAttributes({
-        @WritesAttribute(attribute="tcp.sender", description="The sending host of the messages."),
-        @WritesAttribute(attribute="tcp.port", description="The sending port the messages were received.")
+        @WritesAttribute(attribute = "tcp.sender", description = "The sending host of the messages."),
+        @WritesAttribute(attribute = "tcp.port", description = "The sending port the messages were received.")
 })
 public class CustomListenTCP extends AbstractListenEventBatchingProcessor<StandardEvent> {
 
@@ -84,12 +84,25 @@ public class CustomListenTCP extends AbstractListenEventBatchingProcessor<Standa
             .defaultValue(SSLContextService.ClientAuth.REQUIRED.name())
             .build();
 
+    public static final PropertyDescriptor INCOMING_MESSAGE_DELIMITER = new PropertyDescriptor.Builder()
+            .name("Incoming Message Delimiter")
+            .displayName("Incoming Message Delimiter")
+            .description("Specify the delimeter to separate incoming stream to different messages.")
+            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+            .defaultValue("\\n")
+            .required(true)
+            .build();
+
+    // it is only the array reference that is volatile - not the contents.
+    protected volatile byte[] inMsgDemarcatorBytes;
+
     @Override
     protected List<PropertyDescriptor> getAdditionalProperties() {
         return Arrays.asList(
                 MAX_CONNECTIONS,
                 SSL_CONTEXT_SERVICE,
-                CLIENT_AUTH
+                CLIENT_AUTH,
+                INCOMING_MESSAGE_DELIMITER
         );
     }
 
@@ -117,6 +130,9 @@ public class CustomListenTCP extends AbstractListenEventBatchingProcessor<Standa
         final int bufferSize = context.getProperty(RECV_BUFFER_SIZE).asDataSize(DataUnit.B).intValue();
         final Charset charSet = Charset.forName(context.getProperty(CHARSET).getValue());
 
+        final String inMsgDemarcator = context.getProperty(INCOMING_MESSAGE_DELIMITER).getValue().replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t");
+        inMsgDemarcatorBytes = inMsgDemarcator.getBytes(charset);
+
         // initialize the buffer pool based on max number of connections and the buffer size
         final BlockingQueue<ByteBuffer> bufferPool = createBufferPool(maxConnections, bufferSize);
 
@@ -132,14 +148,14 @@ public class CustomListenTCP extends AbstractListenEventBatchingProcessor<Standa
         }
 
         final EventFactory<StandardEvent> eventFactory = new StandardEventFactory();
-        final ChannelHandlerFactory<StandardEvent<SocketChannel>, AsyncChannelDispatcher> handlerFactory = new SocketChannelHandlerFactory<>();
+        final ChannelHandlerFactory<StandardEvent<SocketChannel>, AsyncChannelDispatcher> handlerFactory = new CustomSocketChannelHandlerFactory<>(inMsgDemarcatorBytes);
         return new SocketChannelDispatcher(eventFactory, handlerFactory, bufferPool, events, getLogger(), maxConnections, sslContext, clientAuth, charSet);
     }
 
     @Override
     protected Map<String, String> getAttributes(final FlowFileEventBatch batch) {
         final String sender = batch.getEvents().get(0).getSender();
-        final Map<String,String> attributes = new HashMap<>(3);
+        final Map<String, String> attributes = new HashMap<>(3);
         attributes.put("tcp.sender", sender);
         attributes.put("tcp.port", String.valueOf(port));
         return attributes;
