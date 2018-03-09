@@ -24,9 +24,11 @@ public class CustomSocketChannelHandlerFactory<E extends Event<SocketChannel>> i
 
 
     private byte[] inMsgDemarcatorBytes;
+    private boolean keepInMsgDemarcator;
 
-    public CustomSocketChannelHandlerFactory(byte[] inMsgDemarcatorBytes) {
+    public CustomSocketChannelHandlerFactory(byte[] inMsgDemarcatorBytes, boolean keepInMsgDemarcator) {
         this.inMsgDemarcatorBytes = inMsgDemarcatorBytes;
+        this.keepInMsgDemarcator = keepInMsgDemarcator;
     }
 
     @Override
@@ -36,7 +38,7 @@ public class CustomSocketChannelHandlerFactory<E extends Event<SocketChannel>> i
                                                                    final EventFactory<E> eventFactory,
                                                                    final BlockingQueue<E> events,
                                                                    final ComponentLog logger) {
-        return new CustomSocketChannelHandler<>(key, dispatcher, charset, eventFactory, events, logger, inMsgDemarcatorBytes);
+        return new CustomSocketChannelHandler<>(key, dispatcher, charset, eventFactory, events, logger, inMsgDemarcatorBytes, keepInMsgDemarcator);
     }
 
     @Override
@@ -46,6 +48,6 @@ public class CustomSocketChannelHandlerFactory<E extends Event<SocketChannel>> i
                                                                       final EventFactory<E> eventFactory,
                                                                       final BlockingQueue<E> events,
                                                                       final ComponentLog logger) {
-        return new CustomSSLSocketChannelHandler<>(key, dispatcher, charset, eventFactory, events, logger, inMsgDemarcatorBytes);
+        return new CustomSSLSocketChannelHandler<>(key, dispatcher, charset, eventFactory, events, logger, inMsgDemarcatorBytes, keepInMsgDemarcator);
     }
 }

@@ -35,6 +35,7 @@ public class CustomSocketChannelHandler<E extends Event<SocketChannel>> extends 
     private final ByteArrayOutputStream currBytes = new ByteArrayOutputStream(4096);
 
     private byte[] inMsgDemarcatorBytes;
+    private boolean keepInMsgDemarcator;
     private int currDelimeterByteIndex;
 
     public CustomSocketChannelHandler(final SelectionKey key,
@@ -43,9 +44,11 @@ public class CustomSocketChannelHandler<E extends Event<SocketChannel>> extends 
                                         final EventFactory<E> eventFactory,
                                         final BlockingQueue<E> events,
                                         final ComponentLog logger,
-                                        final byte[] inMsgDemarcatorBytes) {
+                                        final byte[] inMsgDemarcatorBytes,
+                                        final boolean keepInMsgDemarcator) {
         super(key, dispatcher, charset, eventFactory, events, logger);
         this.inMsgDemarcatorBytes = inMsgDemarcatorBytes;
+        this.keepInMsgDemarcator = keepInMsgDemarcator;
         this.currDelimeterByteIndex = 0;
     }
 
@@ -129,6 +132,10 @@ public class CustomSocketChannelHandler<E extends Event<SocketChannel>> extends 
 
             // check if at end of a message
             if (currByte == inMsgDemarcatorBytes[currDelimeterByteIndex]) {
+
+                if(keepInMsgDemarcator) {
+                    currBytes.write(currByte);
+                }
 
                 // If the last byte in inMsgDemarcatorBytes is reached, then separate message
                 if (currDelimeterByteIndex == inMsgDemarcatorBytes.length - 1) {

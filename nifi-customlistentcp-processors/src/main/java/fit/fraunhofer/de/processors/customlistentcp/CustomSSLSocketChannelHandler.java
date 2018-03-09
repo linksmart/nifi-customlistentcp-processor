@@ -35,6 +35,7 @@ public class CustomSSLSocketChannelHandler<E extends Event<SocketChannel>> exten
     private final ByteArrayOutputStream currBytes = new ByteArrayOutputStream(4096);
 
     private byte[] inMsgDemarcatorBytes;
+    private boolean keepInMsgDemarcator;
     private int currDelimeterByteIndex;
 
     public CustomSSLSocketChannelHandler(final SelectionKey key,
@@ -43,9 +44,11 @@ public class CustomSSLSocketChannelHandler<E extends Event<SocketChannel>> exten
                                    final EventFactory<E> eventFactory,
                                    final BlockingQueue<E> events,
                                    final ComponentLog logger,
-                                   final byte[] inMsgDemarcatorBytes) {
+                                   final byte[] inMsgDemarcatorBytes,
+                                   final boolean keepInMsgDemarcator) {
         super(key, dispatcher, charset, eventFactory, events, logger);
         this.inMsgDemarcatorBytes = inMsgDemarcatorBytes;
+        this.keepInMsgDemarcator = keepInMsgDemarcator;
         this.currDelimeterByteIndex = 0;
     }
 
@@ -127,6 +130,10 @@ public class CustomSSLSocketChannelHandler<E extends Event<SocketChannel>> exten
             // check if at end of a message
             if (currByte == inMsgDemarcatorBytes[currDelimeterByteIndex]) {
 
+                if (keepInMsgDemarcator) {
+                    currBytes.write(currByte);
+                }
+
                 // If the last byte in inMsgDemarcatorBytes is reached, then separate message
                 if (currDelimeterByteIndex == inMsgDemarcatorBytes.length - 1) {
                     if (currBytes.size() > 0) {
@@ -140,7 +147,7 @@ public class CustomSSLSocketChannelHandler<E extends Event<SocketChannel>> exten
                 } else {
                 // Don't write the delimeter bytes to output
                 currDelimeterByteIndex++;
-            }
+                }
 
 
             } else {
