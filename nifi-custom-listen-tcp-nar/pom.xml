@@ -25,6 +25,9 @@
     <artifactId>nifi-custom-listen-tcp-nar</artifactId>
     <version>1.4.0</version>
     <packaging>nar</packaging>
+    <build>
+       <finalName>nifi-custom-listen-tcp</finalName> <!-- Define a name for the nar file so that it is easy to access from Dockerfile -->
+    </build>
     <properties>
         <maven.javadoc.skip>true</maven.javadoc.skip>
         <source.skip>true</source.skip>
@@ -34,7 +37,7 @@
         <dependency>
             <groupId>fit.fraunhofer.de</groupId>
             <artifactId>nifi-custom-listen-tcp-processors</artifactId>
-            <version>1.0-SNAPSHOT</version>
+            <version>1.0</version>
         </dependency>
         <dependency>
             <groupId>org.apache.nifi</groupId>
