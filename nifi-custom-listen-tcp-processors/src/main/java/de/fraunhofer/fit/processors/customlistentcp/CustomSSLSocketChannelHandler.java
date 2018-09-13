@@ -1,9 +1,8 @@
-package fit.fraunhofer.de.processors.customlistentcp;
+package de.fraunhofer.fit.processors.customlistentcp;
 
 /**
  * Created by liang on 09.03.2018.
  */
-
 import org.apache.commons.io.IOUtils;
 import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.processor.util.listen.dispatcher.AsyncChannelDispatcher;
@@ -12,11 +11,13 @@ import org.apache.nifi.processor.util.listen.event.Event;
 import org.apache.nifi.processor.util.listen.event.EventFactory;
 import org.apache.nifi.processor.util.listen.event.EventFactoryUtil;
 import org.apache.nifi.processor.util.listen.handler.socket.SocketChannelHandler;
-import org.apache.nifi.processor.util.listen.response.socket.SocketChannelResponder;
+import org.apache.nifi.processor.util.listen.response.socket.SSLSocketChannelResponder;
+import org.apache.nifi.remote.io.socket.ssl.SSLSocketChannel;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
+import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedByInterruptException;
 import java.nio.channels.ClosedChannelException;
@@ -27,10 +28,9 @@ import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 
 /**
- * Reads from the given SocketChannel into the provided buffer. If the given delimiter is found, the data
- * read up to that point is queued for processing.
+ * Wraps a SocketChannel with an SSLSocketChannel for receiving messages over TLS.
  */
-public class CustomSocketChannelHandler<E extends Event<SocketChannel>> extends SocketChannelHandler<E> {
+public class CustomSSLSocketChannelHandler<E extends Event<SocketChannel>> extends SocketChannelHandler<E> {
 
     private final ByteArrayOutputStream currBytes = new ByteArrayOutputStream(4096);
 
@@ -38,14 +38,14 @@ public class CustomSocketChannelHandler<E extends Event<SocketChannel>> extends 
     private boolean keepInMsgDemarcator;
     private int currDelimeterByteIndex;
 
-    public CustomSocketChannelHandler(final SelectionKey key,
-                                        final AsyncChannelDispatcher dispatcher,
-                                        final Charset charset,
-                                        final EventFactory<E> eventFactory,
-                                        final BlockingQueue<E> events,
-                                        final ComponentLog logger,
-                                        final byte[] inMsgDemarcatorBytes,
-                                        final boolean keepInMsgDemarcator) {
+    public CustomSSLSocketChannelHandler(final SelectionKey key,
+                                   final AsyncChannelDispatcher dispatcher,
+                                   final Charset charset,
+                                   final EventFactory<E> eventFactory,
+                                   final BlockingQueue<E> events,
+                                   final ComponentLog logger,
+                                   final byte[] inMsgDemarcatorBytes,
+                                   final boolean keepInMsgDemarcator) {
         super(key, dispatcher, charset, eventFactory, events, logger);
         this.inMsgDemarcatorBytes = inMsgDemarcatorBytes;
         this.keepInMsgDemarcator = keepInMsgDemarcator;
@@ -55,30 +55,29 @@ public class CustomSocketChannelHandler<E extends Event<SocketChannel>> extends 
     @Override
     public void run() {
         boolean eof = false;
-        SocketChannel socketChannel = null;
-
+        SSLSocketChannel sslSocketChannel = null;
         try {
             int bytesRead;
-            socketChannel = (SocketChannel) key.channel();
-
+            final SocketChannel socketChannel = (SocketChannel) key.channel();
             final SocketChannelAttachment attachment = (SocketChannelAttachment) key.attachment();
+
+            // get the SSLSocketChannel from the attachment
+            sslSocketChannel = attachment.getSslSocketChannel();
+
+            // SSLSocketChannel deals with byte[] so ByteBuffer isn't used here, but we'll use the size to create a new byte[]
             final ByteBuffer socketBuffer = attachment.getByteBuffer();
+            byte[] socketBufferArray = new byte[socketBuffer.limit()];
 
-            // read until the buffer is full
-            while ((bytesRead = socketChannel.read(socketBuffer)) > 0) {
-                // prepare byte buffer for reading
-                socketBuffer.flip();
-                // mark the current position as start, in case of partial message read
-                socketBuffer.mark();
-                // process the contents that have been read into the buffer
-                processBuffer(socketChannel, socketBuffer);
-
-                // Preserve bytes in buffer for next call to run
-                // NOTE: This code could benefit from the  two ByteBuffer read calls to avoid
-                // this compact for higher throughput
-                socketBuffer.reset();
-                socketBuffer.compact();
-                logger.debug("bytes read {}", new Object[]{bytesRead});
+            // read until no more data
+            try {
+                while ((bytesRead = sslSocketChannel.read(socketBufferArray)) > 0) {
+                    processBuffer(sslSocketChannel, socketChannel, bytesRead, socketBufferArray);
+                    logger.debug("bytes read from sslSocketChannel {}", new Object[]{bytesRead});
+                }
+            } catch (SocketTimeoutException ste) {
+                // SSLSocketChannel will throw this exception when 0 bytes are read and the timeout threshold
+                // is exceeded, we don't want to close the connection in this case
+                bytesRead = 0;
             }
 
             // Check for closed socket
@@ -103,7 +102,7 @@ public class CustomSocketChannelHandler<E extends Event<SocketChannel>> extends 
             eof = true;
         } finally {
             if(eof == true) {
-                IOUtils.closeQuietly(socketChannel);
+                IOUtils.closeQuietly(sslSocketChannel);
                 dispatcher.completeConnection(key);
             } else {
                 dispatcher.addBackForSelection(key);
@@ -112,50 +111,45 @@ public class CustomSocketChannelHandler<E extends Event<SocketChannel>> extends 
     }
 
     /**
-     * Process the contents that have been read into the buffer. Allow sub-classes to override this behavior.
+     * Process the contents of the buffer. Give sub-classes a chance to override this behavior.
      *
-     * @param socketChannel the channel the data was read from
-     * @param socketBuffer the buffer the data was read into
-     * @throws InterruptedException if interrupted when queuing events
+     * @param sslSocketChannel the channel the data was read from
+     * @param socketChannel the socket channel being wrapped by sslSocketChannel
+     * @param bytesRead the number of bytes read
+     * @param buffer the buffer to process
+     * @throws InterruptedException thrown if interrupted while queuing events
      */
-    protected void processBuffer(final SocketChannel socketChannel, final ByteBuffer socketBuffer) throws InterruptedException, IOException {
-        // get total bytes in buffer
-        final int total = socketBuffer.remaining();
+    protected void processBuffer(final SSLSocketChannel sslSocketChannel, final SocketChannel socketChannel,
+                                 final int bytesRead, final byte[] buffer) throws InterruptedException, IOException {
         final InetAddress sender = socketChannel.socket().getInetAddress();
 
         // go through the buffer looking for the end of each message
-        currBytes.reset();
-        for (int i = 0; i < total; i++) {
-            // NOTE: For higher throughput, the looking for \n and copying into the byte stream could be improved
-            // Pull data out of buffer and cram into byte array
-            byte currByte = socketBuffer.get();
+        for (int i = 0; i < bytesRead; i++) {
+            final byte currByte = buffer[i];
 
             // check if at end of a message
             if (currByte == inMsgDemarcatorBytes[currDelimeterByteIndex]) {
 
-                if(keepInMsgDemarcator) {
+                if (keepInMsgDemarcator) {
                     currBytes.write(currByte);
                 }
 
                 // If the last byte in inMsgDemarcatorBytes is reached, then separate message
                 if (currDelimeterByteIndex == inMsgDemarcatorBytes.length - 1) {
                     if (currBytes.size() > 0) {
-                        final SocketChannelResponder response = new SocketChannelResponder(socketChannel);
+                        final SSLSocketChannelResponder response = new SSLSocketChannelResponder(socketChannel, sslSocketChannel);
                         final Map<String, String> metadata = EventFactoryUtil.createMapWithSender(sender.toString());
                         final E event = eventFactory.create(currBytes.toByteArray(), metadata, response);
                         events.offer(event);
                         currBytes.reset();
-
-                        // Reset the currDelimeterByteIndex to 0 to start the next detection
-                        currDelimeterByteIndex = 0;
-
-                        // Mark this as the start of the next message
-                        socketBuffer.mark();
                     }
+
                 } else {
-                    // Don't write the delimeter bytes to output
-                    currDelimeterByteIndex++;
+                // Don't write the delimeter bytes to output
+                currDelimeterByteIndex++;
                 }
+
+
             } else {
                 currBytes.write(currByte);
             }
@@ -170,4 +164,3 @@ public class CustomSocketChannelHandler<E extends Event<SocketChannel>> extends 
     }
 
 }
-

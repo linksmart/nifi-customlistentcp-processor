@@ -1,4 +1,4 @@
-package fit.fraunhofer.de.processors.customlistentcp;
+package de.fraunhofer.fit.processors.customlistentcp;
 
 /**
  * Created by liang on 09.03.2018.
@@ -9,8 +9,6 @@ import org.apache.nifi.processor.util.listen.event.Event;
 import org.apache.nifi.processor.util.listen.event.EventFactory;
 import org.apache.nifi.processor.util.listen.handler.ChannelHandler;
 import org.apache.nifi.processor.util.listen.handler.ChannelHandlerFactory;
-import org.apache.nifi.processor.util.listen.handler.socket.SSLSocketChannelHandler;
-import org.apache.nifi.processor.util.listen.handler.socket.StandardSocketChannelHandler;
 
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
